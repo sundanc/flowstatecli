@@ -1,0 +1,6 @@
+typer==0.9.0
+httpx==0.25.2
+rich==13.7.0
+plyer==2.1.0
+python-dotenv==1.0.0
+click==8.1.7
