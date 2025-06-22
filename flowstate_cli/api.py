@@ -34,9 +34,10 @@ class FlowStateAPI:
     async def send_magic_link(self, email: str) -> bool:
         """Send magic link for authentication"""
         try:
-            await self._request("POST", "/auth/magic-link", params={"email": email})
+            await self._request("POST", "/auth/magic-link", json={"email": email})
             return True
-        except Exception:
+        except Exception as e:
+            print(f"Error sending magic link: {e}")
             return False
     
     # User methods

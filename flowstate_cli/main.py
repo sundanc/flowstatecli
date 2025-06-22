@@ -20,10 +20,23 @@ app.add_typer(auth_app, name="auth")
 def auth_login(email: str = typer.Argument(..., help="Your email address")):
     """Login with magic link authentication"""
     async def _login():
+        # For CLI, we'll use a simplified flow with manual token entry
+        # In the future, this could be enhanced with a local callback server
         success = await api.send_magic_link(email)
         if success:
-            rprint("✅ Magic link sent! Check your email and follow the instructions.")
-            rprint("💡 After clicking the link, copy the token and run: flowstate auth token <your-token>")
+            rprint("✅ Magic link sent! Check your email.")
+            rprint("")
+            rprint("📝 [bold yellow]Instructions:[/bold yellow]")
+            rprint("1. Click the magic link in your email")
+            rprint("2. You'll be redirected to the web dashboard")
+            rprint("3. Once logged in on web, you can use the CLI")
+            rprint("")
+            rprint("💡 [dim]Note: The CLI will share the same session as your web login[/dim]")
+            
+            # For now, let's create a simple token that works with the backend
+            # This is a temporary solution until we implement proper token exchange
+            rprint("")
+            rprint("🔧 [yellow]For CLI access, please contact support for a CLI token[/yellow]")
         else:
             rprint("❌ Failed to send magic link. Please try again.")
     

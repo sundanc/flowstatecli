@@ -21,7 +21,7 @@ class Config:
         
         # Return default config
         return {
-            "api_base_url": "http://localhost:8000",
+            "api_base_url": "https://flowstate-cli-production.up.railway.app",
             "auth_token": None,
             "pomo_duration": 25,
             "short_break_duration": 5,
