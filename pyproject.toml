@@ -4,10 +4,10 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "flowstate-cli"
-version = "1.0.0"
+version = "1.2.0"
 description = "Command-line productivity tool with task management and Pomodoro timers"
 authors = [{name = "FlowState", email = "sundancegithub@gmail.com"}]
-license = {text = "MIT"}
+license = "MIT"
 readme = "README.md"
 requires-python = ">=3.8"
 dependencies = [

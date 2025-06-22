@@ -7,6 +7,7 @@ from typing import Optional
 from flowstate_cli.api import api
 from flowstate_cli.config import config
 from flowstate_cli.timer import timer
+from flowstate_cli.daemon import daemon
 from flowstate_cli.flow_mode import flow_mode
 
 app = typer.Typer(help="FlowState CLI - Productivity tool with task management and Pomodoro timers")
@@ -20,33 +21,28 @@ app.add_typer(auth_app, name="auth")
 def auth_login(email: str = typer.Argument(..., help="Your email address")):
     """Login with magic link authentication"""
     async def _login():
-        # For CLI, we'll use a simplified flow with manual token entry
-        # In the future, this could be enhanced with a local callback server
         success = await api.send_magic_link(email)
         if success:
             rprint("✅ Magic link sent! Check your email.")
             rprint("")
-            rprint("📝 [bold yellow]Instructions:[/bold yellow]")
+            rprint("📝 [bold yellow]Next steps:[/bold yellow]")
             rprint("1. Click the magic link in your email")
             rprint("2. You'll be redirected to the web dashboard")
-            rprint("3. Once logged in on web, you can use the CLI")
+            rprint("3. Copy your CLI token from the dashboard")
+            rprint("4. Run: [bold cyan]flowstate auth token <your-token>[/bold cyan]")
             rprint("")
-            rprint("💡 [dim]Note: The CLI will share the same session as your web login[/dim]")
-            
-            # For now, let's create a simple token that works with the backend
-            # This is a temporary solution until we implement proper token exchange
-            rprint("")
-            rprint("🔧 [yellow]For CLI access, please contact support for a CLI token[/yellow]")
+            rprint("� [dim]Your CLI token can be found in the dashboard under 'CLI Access'[/dim]")
         else:
             rprint("❌ Failed to send magic link. Please try again.")
     
     asyncio.run(_login())
 
 @auth_app.command("token")
-def auth_token(token: str = typer.Argument(..., help="Authentication token from magic link")):
-    """Set authentication token"""
+def auth_token(token: str = typer.Argument(..., help="CLI authentication token from the dashboard")):
+    """Set authentication token from the web dashboard"""
     config.set_auth_token(token)
     rprint("✅ Authentication token saved!")
+    rprint("🚀 You can now use all FlowState CLI commands!")
 
 # Task management commands
 @app.command("add")
@@ -163,25 +159,19 @@ def pom_start():
             user = await api.get_current_user()
             duration = user.get('pomo_duration', 25)
             
-            # Start local timer
-            success, message = timer.start(duration, "focus", task_description)
+            # Start daemon timer
+            success, message = daemon.start_timer(duration, "focus", task_description, task_id)
             if success:
                 rprint(f"🍅 {message}")
                 rprint(f"📝 Working on: [bold]{task_description}[/bold]")
+                rprint("🔄 Timer running in background. Use 'flowstate pom status' to check progress.")
                 
                 # Record pomodoro in backend
-                await api.start_pomodoro(task_id, "focus", duration)
+                try:
+                    await api.start_pomodoro(task_id, "focus", duration)
+                except Exception as e:
+                    rprint(f"⚠️ Failed to sync with backend: {e}")
                 
-                # Show timer status periodically
-                while timer.active:
-                    status = timer.get_status()
-                    if status['active']:
-                        print(f"\r🍅 Focusing on '{task_description}': {status['remaining_display']}", end="", flush=True)
-                        await asyncio.sleep(1)
-                    else:
-                        break
-                
-                print()  # New line after timer completes
             else:
                 rprint(f"❌ {message}")
                 
@@ -193,7 +183,7 @@ def pom_start():
 @pom_app.command("stop")
 def pom_stop():
     """Stop current timer"""
-    success, message = timer.stop()
+    success, message = daemon.stop_timer()
     if success:
         rprint(f"⏹️ {message}")
     else:
@@ -202,15 +192,23 @@ def pom_stop():
 @pom_app.command("status")
 def pom_status():
     """Show current timer status"""
-    status = timer.get_status()
-    if status['active']:
-        rprint(f"🍅 {status['session_type'].title()} session active")
-        rprint(f"📝 Task: {status['task_description']}")
-        rprint(f"⏰ Time remaining: {status['remaining_display']}")
-        if status['paused']:
-            rprint("⏸️ Timer is paused")
+    status = daemon.get_status()
+    
+    if not status['active']:
+        if status.get('daemon_running'):
+            rprint("⏸️ No timer is currently running")
+        else:
+            rprint("� Timer daemon is not running")
     else:
-        rprint("⭕ No timer active")
+        session_type = status['session_type'].replace('_', ' ').title()
+        remaining = status['remaining_display']
+        task = status.get('task_description', 'Unknown')
+        
+        if status['paused']:
+            rprint(f"⏸️ {session_type} timer paused - {remaining} remaining")
+        else:
+            rprint(f"🍅 {session_type} timer active - {remaining} remaining")
+        rprint(f"📝 Working on: [bold]{task}[/bold]")
 
 @pom_app.command("break")
 def pom_break(type: str = typer.Argument(..., help="Break type: 'short' or 'long'")):
@@ -225,24 +223,17 @@ def pom_break(type: str = typer.Argument(..., help="Break type: 'short' or 'long
             user = await api.get_current_user()
             duration = user.get('short_break_duration', 5) if type == "short" else user.get('long_break_duration', 15)
             
-            # Start local timer
-            success, message = timer.start(duration, f"{type}_break", f"{type.title()} break")
+            # Start daemon timer
+            success, message = daemon.start_timer(duration, f"{type}_break", f"{type.title()} break")
             if success:
                 rprint(f"☕ {message}")
+                rprint("🔄 Break timer running in background. Use 'flowstate pom status' to check progress.")
                 
                 # Record break in backend
-                await api.start_pomodoro(None, f"{type}_break", duration)
-                
-                # Show timer status
-                while timer.active:
-                    status = timer.get_status()
-                    if status['active']:
-                        print(f"\r☕ {type.title()} break: {status['remaining_display']}", end="", flush=True)
-                        await asyncio.sleep(1)
-                    else:
-                        break
-                
-                print()  # New line after timer completes
+                try:
+                    await api.start_pomodoro(None, f"{type}_break", duration)
+                except Exception as e:
+                    rprint(f"⚠️ Failed to sync with backend: {e}")
             else:
                 rprint(f"❌ {message}")
                 
@@ -250,6 +241,38 @@ def pom_break(type: str = typer.Argument(..., help="Break type: 'short' or 'long
             rprint(f"❌ Error: {str(e)}")
     
     asyncio.run(_start_break())
+
+@pom_app.command("pause")
+def pom_pause():
+    """Pause/resume current timer"""
+    success, message = daemon.pause_timer()
+    if success:
+        rprint(f"⏸️ {message}")
+    else:
+        rprint(f"❌ {message}")
+
+@pom_app.command("daemon")
+def pom_daemon(action: str = typer.Argument(..., help="Daemon action: 'start', 'stop', or 'status'")):
+    """Manage timer daemon"""
+    if action == "start":
+        success, message = daemon.start_daemon()
+        if success:
+            rprint(f"🚀 {message}")
+        else:
+            rprint(f"❌ {message}")
+    elif action == "stop":
+        success, message = daemon.stop_daemon()
+        if success:
+            rprint(f"🛑 {message}")
+        else:
+            rprint(f"❌ {message}")
+    elif action == "status":
+        if daemon.is_daemon_running():
+            rprint("✅ Timer daemon is running")
+        else:
+            rprint("❌ Timer daemon is not running")
+    else:
+        rprint("❌ Action must be 'start', 'stop', or 'status'")
 
 # Flow state mode commands
 mode_app = typer.Typer(help="Flow state mode commands")
