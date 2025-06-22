@@ -5,22 +5,28 @@ from flowstate_cli.config import config
 class FlowStateAPI:
     def __init__(self):
         self.base_url = config.get_api_base_url()
-        self.headers = {}
-        
-        # Set auth header if token exists
-        token = config.get_auth_token()
-        if token:
-            self.headers["Authorization"] = f"Bearer {token}"
     
     async def _request(self, method: str, endpoint: str, **kwargs) -> Dict[str, Any]:
         """Make HTTP request to API"""
         url = f"{self.base_url}{endpoint}"
         
+        # Refresh auth header on each request to pick up new tokens
+        headers = {}
+        token = config.get_auth_token()
+        if token:
+            headers["Authorization"] = f"Bearer {token}"
+        
+        # Merge with any additional headers
+        if "headers" in kwargs:
+            headers.update(kwargs["headers"])
+            kwargs["headers"] = headers
+        else:
+            kwargs["headers"] = headers
+        
         async with httpx.AsyncClient() as client:
             response = await client.request(
                 method=method,
                 url=url,
-                headers=self.headers,
                 **kwargs
             )
             
