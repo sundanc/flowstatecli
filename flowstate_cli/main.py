@@ -44,6 +44,25 @@ def auth_token(token: str = typer.Argument(..., help="CLI authentication token f
     rprint("✅ Authentication token saved!")
     rprint("🚀 You can now use all FlowState CLI commands!")
 
+@app.command("donate")
+def donate():
+    """Support FlowState development"""
+    import webbrowser
+    
+    rprint("☕ [bold yellow]Support FlowState Development[/bold yellow]")
+    rprint("")
+    rprint("💖 If FlowState has helped you stay productive, consider buying me a coffee!")
+    rprint("🚀 Your support helps keep this project alive and growing.")
+    rprint("")
+    rprint("🌐 Opening donation page: [bold cyan]https://buymeacoffee.com/sundanc[/bold cyan]")
+    rprint("")
+    rprint("🙏 [dim]Thank you for using FlowState![/dim]")
+    
+    try:
+        webbrowser.open("https://buymeacoffee.com/sundanc")
+    except Exception:
+        rprint("❌ Could not open browser. Please visit: https://buymeacoffee.com/sundanc")
+
 # Task management commands
 @app.command("add")
 def add_task(description: str = typer.Argument(..., help="Task description")):

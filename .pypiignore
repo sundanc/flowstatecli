@@ -1,0 +1,15 @@
+# Ignore build artifacts and local config for PyPI uploads
+*.pyc
+__pycache__/
+build/
+dist/
+*.egg-info/
+.env
+.venv
+.DS_Store
+*.log
+.idea/
+.vscode/
+*.swp
+*.bak
+*.tmp
