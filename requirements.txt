@@ -4,3 +4,6 @@ rich==13.7.0
 plyer==2.1.0
 python-dotenv==1.0.0
 click==8.1.7
+sqlalchemy>=2.0.0
+bcrypt>=4.0.0
+PyJWT>=2.8.0

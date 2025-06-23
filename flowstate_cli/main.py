@@ -9,6 +9,9 @@ from flowstate_cli.config import config
 from flowstate_cli.timer import timer
 from flowstate_cli.daemon import daemon
 from flowstate_cli.flow_mode import flow_mode
+from flowstate_cli.data_manager import get_data_manager
+from flowstate_cli.auth import local_auth
+from flowstate_cli.sync_engine import sync_engine
 
 app = typer.Typer(help="FlowState CLI - Productivity tool with task management and Pomodoro timers")
 console = Console()
@@ -69,7 +72,8 @@ def add_task(description: str = typer.Argument(..., help="Task description")):
     """Add a new task"""
     async def _add_task():
         try:
-            task = await api.create_task(description)
+            data_manager = get_data_manager()
+            task = await data_manager.create_task(description)
             rprint(f"✅ Added task: [bold green]{task['description']}[/bold green]")
         except Exception as e:
             rprint(f"❌ Error: {str(e)}")
@@ -81,7 +85,8 @@ def list_tasks(all: bool = typer.Option(False, "--all", "-a", help="Include comp
     """List all tasks"""
     async def _list_tasks():
         try:
-            tasks = await api.get_tasks(include_completed=all)
+            data_manager = get_data_manager()
+            tasks = await data_manager.get_tasks(include_completed=all)
             
             if not tasks:
                 rprint("📝 No tasks found. Add one with: flowstate add \"Task description\"")
@@ -95,11 +100,12 @@ def list_tasks(all: bool = typer.Option(False, "--all", "-a", help="Include comp
             
             for task in tasks:
                 status = "✅" if task['is_completed'] else ("🎯" if task['is_active'] else "⭕")
+                created_date = task['created_at'][:10] if task['created_at'] else "N/A"
                 table.add_row(
                     str(task['id']),
                     status,
                     task['description'],
-                    task['created_at'][:10]  # Just the date
+                    created_date
                 )
             
             console.print(table)
@@ -114,7 +120,8 @@ def start_task(task_id: int = typer.Argument(..., help="Task ID to start")):
     """Set task as active"""
     async def _start_task():
         try:
-            task = await api.start_task(task_id)
+            data_manager = get_data_manager()
+            task = await data_manager.start_task(task_id)
             rprint(f"🎯 Started task: [bold green]{task['description']}[/bold green]")
         except Exception as e:
             rprint(f"❌ Error: {str(e)}")
@@ -126,9 +133,10 @@ def complete_task(task_id: Optional[int] = typer.Argument(None, help="Task ID to
     """Mark task as completed"""
     async def _complete_task():
         try:
+            data_manager = get_data_manager()
             if task_id is None:
                 # Get current active task
-                active_task = await api.get_active_task()
+                active_task = await data_manager.get_active_task()
                 if not active_task:
                     rprint("❌ No active task found. Specify a task ID or start a task first.")
                     return
@@ -136,7 +144,7 @@ def complete_task(task_id: Optional[int] = typer.Argument(None, help="Task ID to
             else:
                 target_id = task_id
             
-            task = await api.complete_task(target_id)
+            task = await data_manager.complete_task(target_id)
             rprint(f"✅ Completed task: [bold green]{task['description']}[/bold green]")
         except Exception as e:
             rprint(f"❌ Error: {str(e)}")
@@ -153,7 +161,8 @@ def delete_task(task_id: int = typer.Argument(..., help="Task ID to delete")):
     
     async def _delete_task():
         try:
-            await api.delete_task(task_id)
+            data_manager = get_data_manager()
+            await data_manager.delete_task(task_id)
             rprint("🗑️ Task deleted successfully")
         except Exception as e:
             rprint(f"❌ Error: {str(e)}")
@@ -169,14 +178,18 @@ def pom_start():
     """Start a 25-minute focus session"""
     async def _start_pomodoro():
         try:
+            data_manager = get_data_manager()
             # Get active task if any
-            active_task = await api.get_active_task()
+            active_task = await data_manager.get_active_task()
             task_description = active_task['description'] if active_task else "General focus"
             task_id = active_task['id'] if active_task else None
             
             # Get user settings
-            user = await api.get_current_user()
-            duration = user.get('pomo_duration', 25)
+            try:
+                user = await data_manager.get_current_user()
+                duration = user.get('pomo_duration', 25) if user else 25
+            except Exception:
+                duration = 25
             
             # Start daemon timer
             success, message = daemon.start_timer(duration, "focus", task_description, task_id)
@@ -187,9 +200,9 @@ def pom_start():
                 
                 # Record pomodoro in backend
                 try:
-                    await api.start_pomodoro(task_id, "focus", duration)
+                    await data_manager.start_pomodoro(task_id, "focus", duration)
                 except Exception as e:
-                    rprint(f"⚠️ Failed to sync with backend: {e}")
+                    rprint(f"⚠️ Failed to sync pomodoro: {e}")
                 
             else:
                 rprint(f"❌ {message}")
@@ -326,6 +339,91 @@ def mode_status():
     else:
         rprint("✅ Flow state mode is [bold green]INACTIVE[/bold green]")
 
+# Mode management commands
+@mode_app.command("set")
+def mode_set(mode: str = typer.Argument(..., help="Mode to set: cloud, local, or hybrid")):
+    """Set operating mode"""
+    try:
+        config.set_mode(mode)
+        rprint(f"✅ Mode set to: [bold cyan]{mode}[/bold cyan]")
+        
+        if mode == "local":
+            rprint("📝 [yellow]Note:[/yellow] In local mode, all data is stored locally and won't sync to cloud")
+        elif mode == "cloud":
+            rprint("📝 [yellow]Note:[/yellow] In cloud mode, you need internet connection and valid authentication")
+        else:  # hybrid
+            rprint("📝 [yellow]Note:[/yellow] In hybrid mode, cloud is preferred but falls back to local when offline")
+    except ValueError as e:
+        rprint(f"❌ {e}")
+
+@mode_app.command("status")
+def mode_status():
+    """Show current mode and connectivity status"""
+    current_mode = config.get_mode()
+    
+    table = Table(title="FlowState Mode Status")
+    table.add_column("Setting", style="cyan", no_wrap=True)
+    table.add_column("Value", style="green")
+    
+    table.add_row("Current Mode", current_mode)
+    table.add_row("Auto Sync", "Enabled" if config.get_auto_sync() else "Disabled")
+    table.add_row("Sync Interval", f"{config.get_sync_interval()} seconds")
+    
+    # Check connectivity
+    async def check_status():
+        connectivity = await config.check_connectivity()
+        table.add_row("Cloud Connectivity", "✅ Connected" if connectivity else "❌ Offline")
+        
+        # Check authentication
+        cloud_auth = config.get_auth_token() is not None
+        local_auth_status = local_auth.is_authenticated_locally()
+        
+        table.add_row("Cloud Auth", "✅ Authenticated" if cloud_auth else "❌ Not authenticated")
+        table.add_row("Local Auth", "✅ Authenticated" if local_auth_status else "❌ Not authenticated")
+        
+        console.print(table)
+    
+    asyncio.run(check_status())
+
+@mode_app.command("sync")
+def mode_sync():
+    """Manually trigger sync with cloud"""
+    async def _sync():
+        try:
+            if config.is_local_mode():
+                rprint("❌ Cannot sync in local-only mode")
+                return
+            
+            if not await config.check_connectivity():
+                rprint("❌ No internet connection available")
+                return
+            
+            rprint("🔄 Starting sync...")
+            results = await sync_engine.sync_all()
+            
+            if "error" in results:
+                rprint(f"❌ Sync failed: {results['error']}")
+                return
+            
+            # Display sync results
+            rprint("✅ Sync completed!")
+            if results.get("users_synced", 0) > 0:
+                rprint(f"👤 Users synced: {results['users_synced']}")
+            if results.get("tasks_synced", 0) > 0:
+                rprint(f"� Tasks synced: {results['tasks_synced']}")
+            if results.get("pomodoros_synced", 0) > 0:
+                rprint(f"🍅 Pomodoros synced: {results['pomodoros_synced']}")
+            
+            if results.get("errors"):
+                rprint(f"⚠️ {len(results['errors'])} errors occurred during sync")
+                for error in results["errors"][:3]:  # Show first 3 errors
+                    rprint(f"  • {error}")
+                
+        except Exception as e:
+            rprint(f"❌ Sync failed: {e}")
+    
+    asyncio.run(_sync())
+
 # Configuration commands
 config_app = typer.Typer(help="Configuration commands")
 app.add_typer(config_app, name="config")
@@ -418,6 +516,50 @@ def show_stats():
             rprint(f"❌ Error: {str(e)}")
     
     asyncio.run(_show_stats())
+
+# Local auth commands
+@auth_app.command("local-login")
+def auth_local_login(
+    username: str = typer.Option(..., prompt=True, help="Username"),
+    password: str = typer.Option(..., prompt=True, hide_input=True, help="Password")
+):
+    """Login with local account"""
+    user = local_auth.authenticate_local_user(username, password)
+    if user:
+        token = local_auth.generate_local_token(user)
+        local_auth.save_auth_state({"local_token": token})
+        config.set_local_user_id(user.id)
+        rprint(f"✅ Welcome back, [bold cyan]{username}[/bold cyan]!")
+    else:
+        rprint("❌ Invalid credentials")
+
+@auth_app.command("local-register")
+def auth_local_register(
+    username: str = typer.Option(..., prompt=True, help="Choose a username"),
+    password: str = typer.Option(..., prompt=True, hide_input=True, confirmation_prompt=True, help="Password"),
+    email: str = typer.Option(None, help="Email (optional, for cloud sync)")
+):
+    """Register new local account"""
+    try:
+        user = local_auth.create_local_user(username, password, email)
+        token = local_auth.generate_local_token(user)
+        local_auth.save_auth_state({"local_token": token})
+        config.set_local_user_id(user.id)
+        rprint(f"✅ Account created! Welcome, [bold cyan]{username}[/bold cyan]!")
+        if email:
+            rprint(f"📧 Email [dim]{email}[/dim] saved for future cloud sync")
+        else:
+            rprint("💡 [dim]Tip: You can add an email later for cloud sync[/dim]")
+    except Exception as e:
+        rprint(f"❌ Registration failed: {e}")
+
+@auth_app.command("logout")
+def auth_logout():
+    """Logout from current session"""
+    config.set_auth_token(None)
+    local_auth.clear_auth_state()
+    config.set_local_user_id(None)
+    rprint("✅ Logged out successfully!")
 
 if __name__ == "__main__":
     app()
