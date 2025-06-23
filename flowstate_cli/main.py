@@ -9,6 +9,7 @@ from flowstate_cli.config import config
 from flowstate_cli.timer import timer
 from flowstate_cli.daemon import daemon
 from flowstate_cli.flow_mode import flow_mode
+from flowstate_cli.daily import daily
 
 app = typer.Typer(help="FlowState CLI - Productivity tool with task management and Pomodoro timers")
 console = Console()
@@ -418,6 +419,74 @@ def show_stats():
             rprint(f"❌ Error: {str(e)}")
     
     asyncio.run(_show_stats())
+
+
+#Daily Task Addition
+daily_app = typer.Typer(help="Manage daily task buffer")
+app.add_typer(daily_app, name="daily")
+
+@daily_app.command("add")
+def daily_add(description: str = typer.Argument(..., help="Daily task description")):
+    daily.add_task(description)
+    rprint(f"📝 Added to daily list: [bold]{description}[/bold]")
+
+@daily_app.command("commit")
+def daily_commit():
+    """Add daily tasks to main list (buffer is NOT cleared)"""
+    tasks = daily.get_tasks()
+    if not tasks:
+        rprint("📭 No tasks in daily buffer.")
+        return
+
+    async def _commit():
+        success = 0
+        for t in tasks:
+            try:
+                await api.create_task(t["description"])
+                success += 1
+            except Exception as e:
+                rprint(f"❌ Failed to add: {t['description']} ({e})")
+
+        rprint(f"✅ Committed {success} task(s) to main list.")
+        rprint("📝 Daily buffer remains intact. Use `flowstate daily remove` to remove manually if needed.")
+
+    asyncio.run(_commit())
+
+
+
+@daily_app.command("list")
+def daily_list():
+    """Show tasks in daily buffer"""
+    tasks = daily.get_tasks()
+    
+    if not tasks:
+        rprint("📭 No tasks in daily list.")
+        return
+
+    table = Table(title="🗒️ Daily Task Buffer")
+    table.add_column("Index", style="cyan")
+    table.add_column("Description", style="white")
+    table.add_column("Created At", style="dim")
+
+    for idx, task in enumerate(tasks, start=1):
+        created_at = task.get("created_at", "")[:19]  # Trim to date+time
+        table.add_row(str(idx), task["description"], created_at)
+
+    console.print(table)
+
+@daily_app.command("remove")
+def daily_remove(index: int = typer.Argument(..., help="Index of task to remove (from `daily list`)")):
+    """Remove a task from the daily buffer"""
+    tasks = daily.get_tasks()
+    if index < 1 or index > len(tasks):
+        rprint("❌ Invalid task index.")
+        return
+
+    removed = tasks.pop(index - 1)
+    daily._save_tasks(tasks)
+    rprint(f"🗑️ Removed from daily list: [bold]{removed['description']}[/bold]")
+
+
 
 if __name__ == "__main__":
     app()
